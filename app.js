@@ -7,6 +7,8 @@ import mongoose from "mongoose";
 import session from 'express-session';
 import passport from 'passport';
 import passportLocalMongoose from "passport-local-mongoose";
+import GoogleStrategy from "passport-google-oauth20";
+import findOrCreate from "mongoose-findorcreate";
 
 const app = express();
 
@@ -27,17 +29,35 @@ mongoose.connect("mongodb://127.0.0.1:27017/userDB");
 
 const userSchema = new mongoose.Schema({
     email: String,
-    password: String
+    password: String,
+    googleId: String,
+    secret: String
 });
 userSchema.plugin(passportLocalMongoose);
+userSchema.plugin(findOrCreate);
 
 const User = mongoose.model("User", userSchema);
 
 passport.use(User.createStrategy());
-passport.serializeUser(User.serializeUser());
-passport.deserializeUser(User.deserializeUser());
+passport.serializeUser(function(user, done) {
+    done(null, user);
+  });
+   
+  passport.deserializeUser(function(user, done) {
+    done(null, user);
+  });
 
-
+passport.use(new GoogleStrategy({
+    clientID: process.env.CLIENT_ID,
+    clientSecret: process.env.CLIENT_SECRET,
+    callbackURL: "http://localhost:3000/auth/google/sercet"
+  },
+  function(accessToken, refreshToken, profile, cb) {
+    User.findOrCreate({ googleId: profile.id }, function (err, user) {
+      return cb(err, user);
+    });
+  }
+));
 
 app.route("/")
     .get((req, res)=> {
@@ -45,6 +65,15 @@ app.route("/")
     })
 
 
+app.get('/auth/google',
+    passport.authenticate('google', { scope: ['profile'] }));
+  
+app.get('/auth/google/sercet', 
+    passport.authenticate('google', { failureRedirect: '/login' }),
+    function(req, res) {
+      // Successful authentication, redirect home.
+      res.redirect('/secrets');
+    });
 
 
 app.route("/login")
@@ -80,12 +109,32 @@ app.get("/logout", function (req, res) {
 
 
 app.get("/secrets", function(req, res){
+    User.find({secret: {$ne: null}}).then((foundUser)=>{
+        res.render("secrets", {usersWithSecrets: foundUser});
+    })
+
+});
+
+app.get("/submit", (req, res)=> {
     if(req.isAuthenticated()) {
-        res.render("secrets");
+        res.render("submit");
     } else {
         res.redirect("/login");
     }
+});
+
+app.post("/submit", (req, res)=> {
+    const userSecret = req.body.secret;
+    const userId = req.user._id.toString();
+    console.log(userId);
+    User.findById(userId).then((foundUser)=> {
+        foundUser.secret = userSecret;
+        foundUser.save().then(()=>{
+            res.redirect("/secrets")
+        })
+    })
 })
+
 
  app.route("/register")
     .get((req, res)=> {
@@ -103,16 +152,6 @@ app.get("/secrets", function(req, res){
             }
         })
     })
-
-
-
-app.route("/submit")
-    .get((req, res)=> {
-        res.render("submit");
-    })
-
-
-
 
 
 
